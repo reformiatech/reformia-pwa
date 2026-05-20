@@ -20,6 +20,20 @@ const COLORS = [
 
 function token() { return localStorage.getItem('ubidots_token') || ''; }
 
+// ── Busy lock — prevents double-clicks from firing multiple requests ────────
+let busy = false;
+function lock()   { busy = true;  setAllButtons(true);  }
+function unlock() { busy = false; setAllButtons(false); }
+
+function setAllButtons(disabled) {
+  document.querySelectorAll('.btn, .color-swatch').forEach(b => {
+    b.disabled = disabled;
+    if (disabled) b.style.opacity = '0.5';
+    else b.style.opacity = '';
+  });
+}
+
+// ── API ────────────────────────────────────────────────────────────────────
 async function readVar(device, variable) {
   try {
     const res = await fetch(`${BASE}/devices/${device}/${variable}/values/?page_size=1`, {
@@ -71,27 +85,12 @@ function setActive(id, active) {
 // ── Reaura ────────────────────────────────────────────────────────────────
 let reauraState = { lamps: 0, auto: 0, r: 0, g: 0, b: 0, ldr: null };
 
-async function refreshReaura() {
-  const d = await readVars(DEVICES.reaura.label, [
-    'lamps_control', 'auto_mode',
-    'rgb_red_control', 'rgb_green_control', 'rgb_blue_control',
-    'ldr_value',
-  ]);
-  reauraState = {
-    lamps: d.lamps_control ?? 0,
-    auto:  d.auto_mode      ?? 0,
-    r:     d.rgb_red_control   ?? 0,
-    g:     d.rgb_green_control ?? 0,
-    b:     d.rgb_blue_control  ?? 0,
-    ldr:   d.ldr_value,
-  };
-
+function applyReauraUI() {
   setStatus('reaura-lamp-badge', reauraState.lamps);
   setStatus('reaura-auto-badge', reauraState.auto);
-  setActive('btn-lamp-on',   reauraState.lamps === 1 && reauraState.auto === 0);
-  setActive('btn-lamp-off',  reauraState.lamps === 0 && reauraState.auto === 0);
-  setActive('btn-auto-on',   reauraState.auto === 1);
-
+  setActive('btn-lamp-on',  reauraState.lamps === 1 && reauraState.auto === 0);
+  setActive('btn-lamp-off', reauraState.lamps === 0 && reauraState.auto === 0);
+  setActive('btn-auto-on',  reauraState.auto === 1);
   const ldr = reauraState.ldr;
   if (ldr != null) {
     const desc = ldr < 2000 ? 'Aydınlık ☀️' : ldr > 2500 ? 'Karanlık 🌙' : 'Alacakaranlık 🌇';
@@ -99,100 +98,160 @@ async function refreshReaura() {
   } else {
     setText('ldr-value', 'N/A');
   }
+  el('color-preview').style.background = `rgb(${reauraState.r},${reauraState.g},${reauraState.b})`;
+}
 
-  const previewColor = `rgb(${reauraState.r}, ${reauraState.g}, ${reauraState.b})`;
-  el('color-preview').style.background = previewColor;
+async function refreshReaura() {
+  const d = await readVars(DEVICES.reaura.label, [
+    'lamps_control', 'auto_mode',
+    'rgb_red_control', 'rgb_green_control', 'rgb_blue_control', 'ldr_value',
+  ]);
+  reauraState = {
+    lamps: d.lamps_control       ?? 0,
+    auto:  d.auto_mode           ?? 0,
+    r:     d.rgb_red_control     ?? 0,
+    g:     d.rgb_green_control   ?? 0,
+    b:     d.rgb_blue_control    ?? 0,
+    ldr:   d.ldr_value,
+  };
+  applyReauraUI();
 }
 
 async function reauraLamp(on) {
+  if (busy) return;
+  lock();
+  reauraState.lamps = on ? 1 : 0;   // immediate optimistic update
+  reauraState.auto  = 0;
+  applyReauraUI();
   await writeVars(DEVICES.reaura.label, { lamps_control: on ? 1 : 0 });
   await refreshReaura();
+  unlock();
 }
 
 async function reauraAuto(on) {
+  if (busy) return;
+  lock();
+  reauraState.auto = on ? 1 : 0;
+  applyReauraUI();
   await writeVars(DEVICES.reaura.label, { auto_mode: on ? 1 : 0 });
   await refreshReaura();
+  unlock();
 }
 
 async function reauraColor(r, g, b) {
+  if (busy) return;
+  lock();
+  reauraState.lamps = 1; reauraState.r = r; reauraState.g = g; reauraState.b = b;
+  applyReauraUI();
   await writeVars(DEVICES.reaura.label, {
-    lamps_control:     1,
-    rgb_red_control:   r,
-    rgb_green_control: g,
-    rgb_blue_control:  b,
+    lamps_control: 1, rgb_red_control: r, rgb_green_control: g, rgb_blue_control: b,
   });
   await refreshReaura();
+  unlock();
 }
 
 // ── Reora ─────────────────────────────────────────────────────────────────
+let reoraState = { pump: 0, auto: 0 };
+
+function applyReoraUI() {
+  setStatus('reora-pump-badge', reoraState.pump);
+  setStatus('reora-auto-badge', reoraState.auto);
+  setActive('btn-reora-pump-on',  reoraState.pump === 1);
+  setActive('btn-reora-pump-off', reoraState.pump === 0);
+  setActive('btn-reora-auto-on',  reoraState.auto === 1);
+  setActive('btn-reora-auto-off', reoraState.auto === 0);
+}
+
 async function refreshReora() {
   const d = await readVars(DEVICES.reora.label, [
     'soil_moisture', 'temperature', 'humidity', 'pump_status', 'auto_mode',
   ]);
-
-  setStatus('reora-pump-badge', d.pump_status);
-  setStatus('reora-auto-badge', d.auto_mode);
-  setActive('btn-reora-pump-on',  d.pump_status === 1);
-  setActive('btn-reora-pump-off', d.pump_status === 0);
-  setActive('btn-reora-auto-on',  d.auto_mode   === 1);
-  setActive('btn-reora-auto-off', d.auto_mode   === 0);
-
+  reoraState = { pump: d.pump_status ?? 0, auto: d.auto_mode ?? 0 };
+  applyReoraUI();
   const moist = d.soil_moisture;
   const moistDesc = moist != null
-    ? (moist < 30 ? ' ⚠️ Kuru' : moist > 60 ? ' ✅ Nemli' : ' Normal')
-    : '';
+    ? (moist < 30 ? ' ⚠️ Kuru' : moist > 60 ? ' ✅ Nemli' : ' Normal') : '';
   setText('reora-moisture', moist != null ? `${moist.toFixed(0)}%${moistDesc}` : 'N/A');
   setText('reora-temp',     d.temperature != null ? `${d.temperature.toFixed(1)}°C` : 'N/A');
   setText('reora-humidity', d.humidity    != null ? `${d.humidity.toFixed(0)}%`    : 'N/A');
 }
 
 async function reoraPump(on) {
+  if (busy) return;
+  lock();
+  reoraState.pump = on ? 1 : 0;
+  applyReoraUI();
   await writeVars(DEVICES.reora.label, { pump_status: on ? 1 : 0 });
   await refreshReora();
+  unlock();
 }
 
 async function reoraAuto(on) {
+  if (busy) return;
+  lock();
+  reoraState.auto = on ? 1 : 0;
+  applyReoraUI();
   await writeVars(DEVICES.reora.label, { auto_mode: on ? 1 : 0 });
   await refreshReora();
+  unlock();
 }
 
 // ── Repool ────────────────────────────────────────────────────────────────
+let repoolState = { pump: 0, drain: 0, auto: 0 };
+
+function applyRepoolUI() {
+  setStatus('repool-pump-badge',  repoolState.pump);
+  setStatus('repool-drain-badge', repoolState.drain);
+  setStatus('repool-auto-badge',  repoolState.auto);
+  setActive('btn-repool-pump-on',   repoolState.pump  === 1);
+  setActive('btn-repool-pump-off',  repoolState.pump  === 0);
+  setActive('btn-repool-drain-on',  repoolState.drain === 1);
+  setActive('btn-repool-drain-off', repoolState.drain === 0);
+  setActive('btn-repool-auto-on',   repoolState.auto  === 1);
+  setActive('btn-repool-auto-off',  repoolState.auto  === 0);
+}
+
 async function refreshRepool() {
   const d = await readVars(DEVICES.repool.label, [
     'water_level', 'temperature', 'pump_status', 'drain_status', 'auto_mode',
   ]);
-
-  setStatus('repool-pump-badge',  d.pump_status);
-  setStatus('repool-drain-badge', d.drain_status);
-  setStatus('repool-auto-badge',  d.auto_mode);
-  setActive('btn-repool-pump-on',   d.pump_status  === 1);
-  setActive('btn-repool-pump-off',  d.pump_status  === 0);
-  setActive('btn-repool-drain-on',  d.drain_status === 1);
-  setActive('btn-repool-drain-off', d.drain_status === 0);
-  setActive('btn-repool-auto-on',   d.auto_mode    === 1);
-  setActive('btn-repool-auto-off',  d.auto_mode    === 0);
-
+  repoolState = { pump: d.pump_status ?? 0, drain: d.drain_status ?? 0, auto: d.auto_mode ?? 0 };
+  applyRepoolUI();
   const lvl = d.water_level;
   const lvlDesc = lvl != null
-    ? (lvl < 40 ? ' ⚠️ Düşük' : lvl > 85 ? ' ✅ Dolu' : ' Normal')
-    : '';
-  setText('repool-level', lvl  != null ? `${lvl.toFixed(0)}%${lvlDesc}` : 'N/A');
+    ? (lvl < 40 ? ' ⚠️ Düşük' : lvl > 85 ? ' ✅ Dolu' : ' Normal') : '';
+  setText('repool-level', lvl != null ? `${lvl.toFixed(0)}%${lvlDesc}` : 'N/A');
   setText('repool-temp',  d.temperature != null ? `${d.temperature.toFixed(1)}°C` : 'N/A');
 }
 
 async function repoolPump(on) {
+  if (busy) return;
+  lock();
+  repoolState.pump = on ? 1 : 0;
+  applyRepoolUI();
   await writeVars(DEVICES.repool.label, { pump_status: on ? 1 : 0 });
   await refreshRepool();
+  unlock();
 }
 
 async function repoolDrain(on) {
+  if (busy) return;
+  lock();
+  repoolState.drain = on ? 1 : 0;
+  applyRepoolUI();
   await writeVars(DEVICES.repool.label, { drain_status: on ? 1 : 0 });
   await refreshRepool();
+  unlock();
 }
 
 async function repoolAuto(on) {
+  if (busy) return;
+  lock();
+  repoolState.auto = on ? 1 : 0;
+  applyRepoolUI();
   await writeVars(DEVICES.repool.label, { auto_mode: on ? 1 : 0 });
   await refreshRepool();
+  unlock();
 }
 
 // ── Color swatches ────────────────────────────────────────────────────────
@@ -232,6 +291,7 @@ function setLastUpdated() {
 }
 
 async function refreshAll() {
+  if (busy) return;
   setText('last-updated', 'Güncelleniyor...');
   await Promise.all([refreshReaura(), refreshReora(), refreshRepool()]);
   setLastUpdated();
@@ -240,12 +300,9 @@ async function refreshAll() {
 // ── Boot ──────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   buildColorSwatches();
-
   if (!token()) openSettings();
   else refreshAll();
-
   setInterval(refreshAll, 8000);
-
   if ('serviceWorker' in navigator)
     navigator.serviceWorker.register('/sw.js');
 });
