@@ -1,0 +1,18 @@
+{
+  "name": "Reformia IoT",
+  "short_name": "Reformia",
+  "description": "Bahçe, Sulama ve Havuz kontrol paneli",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#111827",
+  "theme_color": "#111827",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
